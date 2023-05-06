@@ -6,7 +6,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Junzki/link-preview"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/samber/lo"
+	lop "github.com/samber/lo/parallel"
 
 	"github.com/nekomeowww/insights-bot/pkg/types/telegram"
 	"github.com/nekomeowww/insights-bot/pkg/utils"
@@ -84,11 +87,36 @@ func FullNameFromFirstAndLastName(firstName, lastName string) string {
 
 // ExtractTextFromMessage
 func ExtractTextFromMessage(message *tgbotapi.Message) string {
-	if message.Caption != "" {
-		return message.Caption
+	text := lo.Ternary(message.Caption != "", message.Caption, message.Text)
+	type MarkdownLink struct {
+		Markdown string
+		Start    int
+		End      int
 	}
 
-	return message.Text
+	links := lop.Map(message.Entities, func(entity tgbotapi.MessageEntity, i int) MarkdownLink {
+		if entity.Type == "url" {
+			start_i := entity.Offset
+			end_i := start_i + entity.Length
+			link := text[start_i:end_i]
+			result, err := LinkPreview.PreviewLink(link, nil)
+			if err != nil {
+				return MarkdownLink{link, start_i, end_i}
+			}
+			md := "[" + result.Title + "](" + result.Link + ")"
+			return MarkdownLink{md, start_i, end_i}
+		}
+		return MarkdownLink{"", -1, -1}
+	})
+
+	for i := len(links) - 1; i >= 0; i-- {
+		if links[i].Start == -1 {
+			continue
+		}
+		text = text[:links[i].Start] + links[i].Markdown + text[links[i].End:]
+	}
+
+	return text
 }
 
 // EscapeHTMLSymbols
